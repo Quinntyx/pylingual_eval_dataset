@@ -1,0 +1,12 @@
+[project]
+name = "pylingual-eval-dataset"
+version = "1.0.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+"pylingual"
+]
+
+[tool.uv.sources]
+pylingual = { git = "https://github.com/syssec-utd/pylingual"}
