@@ -25,14 +25,31 @@ To install remaining dependencies, run `uv sync` prior to evaluation. Pylingual 
 ## Usage
 Run an evaluation with:
 ```sh
-uv run eval.py <version text file> <output directory>
+uv run eval.py <output directory> [options]
 ```
 
-For example, to run the 3.13 evaluation and put the results in `results/`:
+| Option | Description |
+| ------ | ----------- |
+| `-p`, `--pylingual-version` | Dataset to evaluate on: `v1` or `v2` (default: `v1`) |
+| `-v`, `--version` | Python version to evaluate on, e.g. `3.13`. If omitted, every version in the dataset is evaluated |
+| `-l`, `--pyc-list` | Path to a custom text file of `.pyc` paths to evaluate. Overrides `-p` and `-v` |
+
+Version text files are included in the repository for every supported Python release and contain an enumeration of paths to `.pyc` files used for that Python version.
+
+Examples:
+
 ```sh
-uv run eval.py 313-pyc-list.txt results/
+# Evaluate a single Python version (3.13) on the v1 dataset
+uv run eval.py results/ -v 3.13
+
+# Evaluate every Python version on the v2 dataset
+uv run eval.py results/ -p v2
+
+# Evaluate a specific list of .pyc files
+uv run eval.py results/ -l pylingualv1/313-pyc-list.txt
 ```
-Version text files are included in the repository for every supported Python release and contain an enumeration of paths to `.pyc` files used for that Python version. 
+
+When evaluating by dataset (`-p`/`-v`), results for each Python version are written to their own subdirectory, `results/python-<version>/pylingual-<timestamp>/`. When using `-l`, results go directly to `results/pylingual-<timestamp>/`.
 
 ## Output Format
 Each evaluation creates a timestamped directory inside the requested output directory:

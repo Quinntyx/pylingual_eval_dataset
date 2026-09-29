@@ -9,69 +9,94 @@ import signal
 
 from pylingual.utils.generate_bytecode import CompileError
 from pylingual.decompiler import decompile
+from pylingual.utils.version import PythonVersion
+
+TIMEOUT_SECONDS = 300
+FIELDNAMES = ["pyc_file", "py_file", "identifier", "success", "category", "notes"]
+
+def _timeout_handler(signum, frame):
+    raise TimeoutError()
+
+def decompile_with_timeout(pyc_file, target_out_dir):
+    signal.alarm(TIMEOUT_SECONDS)
+    try:
+        return decompile(pyc_file, target_out_dir)
+    finally:
+        signal.alarm(0)
+
+
+def evaluate(pyc_list: pathlib.Path, out_dir: pathlib.Path):
+    start_time = datetime.now()
+    signal.signal(signal.SIGALRM, _timeout_handler)
+
+    out_dir = out_dir / f"pylingual-{start_time:%Y-%m-%d_%H-%M-%S}"
+    results_dir = out_dir / "decompilation_results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    pyc_files = [pathlib.Path(line.strip()) for line in pyc_list.read_text().splitlines() if line.strip()]
+
+    attempted = succeeded = 0
+
+    with (out_dir / "evaluation_results.csv").open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        writer.writeheader()
+
+        progress = tqdm.tqdm(pyc_files)
+        for pyc_file in progress:
+            identifier = pyc_file.parent.name
+            target_out_dir = results_dir / f"{identifier}.py"
+            row = {"pyc_file": pyc_file, "py_file": identifier, "identifier": "FILE"}
+            attempted += 1
+
+            try:
+                py_file = decompile_with_timeout(pyc_file, target_out_dir)
+            except Exception as err:
+                writer.writerow({**row, "py_file": "", "success": False, "category": "DECOMPILER ERROR", "notes": repr(err)})
+            else:
+                ok = all(r.success for r in py_file.equivalence_results)
+                succeeded += ok
+                writer.writerow({**row, "success": ok, "category": "Equal" if ok else "Different", "notes": ""})
+                writer.writerows(
+                    {
+                        **row,
+                        "identifier": identifier,
+                        "success": r.success,
+                        "notes": str(r) if isinstance(r, CompileError) else r.message,
+                    }
+                    for r in py_file.equivalence_results
+                )
+
+            progress.set_postfix(file_success=f"{succeeded}/{attempted} ({succeeded / attempted:.2%})")
+
+    rate = f"{succeeded / attempted:.2%}" if attempted else "N/A"
+    (out_dir / "elapsed_time.txt").write_text(
+        f"Elapsed Time: {datetime.now() - start_time}\n"
+        f"File success: {succeeded}/{attempted} {rate}\n"
+    )
+
 
 @click.command(help= "Evaluation script for pylingual")
-@click.argument("pyc_list")
-@click.argument("out_dir")
-def main(pyc_list, out_dir):
-    start_time = datetime.now()
+@click.argument("out_dir", type=click.Path(file_okay=False, path_type=pathlib.Path))
+@click.option("-p", "--pylingual-version", default="v1", type=str, help="The PyLingual version you want to evaluate on")
+@click.option("-l", "--pyc-list", default=None, type=click.Path(exists=True, path_type=pathlib.Path), help="A list of file paths to evaluate on")
+@click.option("-v", "--version", default=None, type=str, help="If using a specific PyLingual version, choose which Python version to evaluate on")
+def main(out_dir, pylingual_version, pyc_list, version):
     
-    def timeout_handler(signum, frame):
-        raise TimeoutError()
-        
-    signal.signal(signal.SIGALRM, timeout_handler)
+    if pyc_list:
+        evaluate(pyc_list, out_dir)
+        return
 
-    pyc_list = pathlib.Path(pyc_list)
-    out_dir = pathlib.Path(out_dir) / f"pylingual-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-    
-    pyc_files = [pathlib.Path(pyc_path_line.strip()) for pyc_path_line in pyc_list.read_text().splitlines()]
+    root_dir = pathlib.Path(f"pylingual{pylingual_version}")
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    evaluation_results_file = out_dir / 'evaluation_results.csv'
-    evaluation_results_stream = evaluation_results_file.open('w', newline='')
-    evaluation_writer = csv.DictWriter(evaluation_results_stream, fieldnames=['pyc_file', 'py_file', 'identifier', 'success', 'category', 'notes'])
-    evaluation_writer.writeheader()
+    if version:
+        ver = PythonVersion(version)
+        lists = [root_dir / f"{ver.major}{ver.minor}-pyc-list.txt"]
+    else:
+        lists = sorted(root_dir.glob("*-pyc-list.txt"))
 
-    # decompile all the pyc files
-    total_files_succeeded = 0
-    total_files_attempted = 0 
-    for pyc_file in (evaluation_progress := tqdm.tqdm(pyc_files)):
-        decompiler_results_dir = out_dir / 'decompilation_results'
-        decompiler_results_dir.mkdir(parents=True, exist_ok=True)
-        target_out_dir =  decompiler_results_dir / (str(pyc_file.parent.name) + ".py") 
-        identifier = str(pyc_file).split("/")[-2]
-        # update progress bar
-        if total_files_attempted > 0:
-            evaluation_progress.set_postfix({
-                'file_success': f'{total_files_succeeded}/{total_files_attempted} ({total_files_succeeded / total_files_attempted:.2%})', 
-                })
-
-        total_files_attempted += 1
-        
-        # decompile the file
-        try:
-            signal.alarm(300) # 5-minute timeout for decompiling one file
-            py_file = decompile(pyc_file, target_out_dir)
-            signal.alarm(0) # success; disable timer
-        except Exception as err:
-            signal.alarm(0) 
-            evaluation_writer.writerow({'pyc_file': pyc_file, 'py_file': '', 'identifier': 'FILE', 'success': False, 'category': 'DECOMPILER ERROR', 'notes': repr(err)})
-            continue
-
-        if all([result.success for result in py_file.equivalence_results]):
-            evaluation_writer.writerow({'pyc_file': pyc_file, 'py_file': pyc_file.parent.name, 'identifier': 'FILE', 'success': True, 'category': 'Equal', 'notes': ''})
-            total_files_succeeded += 1
-        else:
-            evaluation_writer.writerow({'pyc_file': pyc_file, 'py_file': pyc_file.parent.name, 'identifier': 'FILE', 'success': False, 'category': 'Different', 'notes': ''})
-        
-        evaluation_writer.writerows({'pyc_file': pyc_file, 'py_file': pyc_file.parent.name, 'identifier': identifier, 'success': result.success,  'notes': str(result) if isinstance(result, CompileError)  else result.message} for result in py_file.equivalence_results)
-    
-    evaluation_results_stream.close()
-    elapsed_time = datetime.now() - start_time
-    
-    with open(out_dir / 'elapsed_time.txt', 'w') as time_file:
-        time_file.write(f"Elapsed Time: {str(elapsed_time)}\n")
-        time_file.write(f"File success: {total_files_succeeded}/{total_files_attempted} {total_files_succeeded/total_files_attempted :.2%}")
+    for pyc_list in lists:
+        ver = PythonVersion(pyc_list.name.split("-")[0])
+        evaluate(pyc_list, out_dir / f"python-{ver.major}.{ver.minor}")
 
 if __name__ == "__main__":
     main()
