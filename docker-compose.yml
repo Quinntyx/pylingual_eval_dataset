@@ -1,0 +1,9 @@
+# Mirrors the redis service from pylingual-webserver-deployment/pylingual-webserver/docker-compose.yml
+# so the evaluator can share the same translation cache the production workers use.
+name: pylingual-eval
+services:
+  redis:
+    image: "redis:latest"
+    ports:
+      - "6379:6379"
+    restart: always

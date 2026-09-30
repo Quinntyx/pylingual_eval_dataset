@@ -22,6 +22,17 @@ Select Python 3.6 and 3.7 when prompted.
 
 To install remaining dependencies, run `uv sync` prior to evaluation. Pylingual segmentation and translation models are downloaded automatically from Hugging Face on first use and cached for later evaluations.  
 
+### Redis translation cache
+
+Pylingual caches translation-model predictions in redis, keyed by Python version and normalized bytecode. With the cache enabled, identical statements are only translated once — across workers, files, and evaluation runs — which speeds up evaluation considerably. This is the same setup the production deployment (`pylingual-webserver-deployment`) uses.
+
+Start the cache with:
+```sh
+docker compose up -d redis
+```
+
+Then either pass `--redis-host 127.0.0.1` to `eval.py`, or set `PYLINGUAL_REDIS_HOST=127.0.0.1` in your environment. Without it, the evaluator runs with caching disabled (matching the old behavior). Note the cache lives in the container's memory: it is lost when the container is removed, so `docker compose restart redis` preserves it but re-creating it does not.
+
 ## Usage
 Run an evaluation with:
 ```sh
@@ -33,6 +44,7 @@ uv run eval.py <output directory> [options]
 | `-p`, `--pylingual-version` | Dataset to evaluate on: `v1` or `v2` (default: `v1`) |
 | `-v`, `--version` | Python version to evaluate on, e.g. `3.13`. If omitted, every version in the dataset is evaluated |
 | `-l`, `--pyc-list` | Path to a custom text file of `.pyc` paths to evaluate. Overrides `-p` and `-v` |
+| `-r`, `--redis-host` | Host of a redis translation cache, e.g. `127.0.0.1`. Defaults to `$PYLINGUAL_REDIS_HOST`; unset means caching is disabled |
 
 Version text files are included in the repository for every supported Python release and contain an enumeration of paths to `.pyc` files used for that Python version.
 

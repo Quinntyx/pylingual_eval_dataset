@@ -13,7 +13,7 @@ from pylingual.utils.version import PythonVersion
 
 TIMEOUT_SECONDS = 300 # 5-minute timeout for decompiling one file
 FIELDNAMES = ["pyc_file", "py_file", "identifier", "success", "category", "notes"]
-
+REDIS_PORT = 6379  # matches the redis container in docker-compose.yml / production
 
 # worker functions
 
@@ -21,12 +21,14 @@ def _timeout_handler(signum, frame):
     raise TimeoutError()
 
 
-def _init_worker(gpu_queue):
+def _init_worker(gpu_queue, redis_host):
     """Runs once per worker process to claim a GPU"""
     gpu = gpu_queue.get()
     if gpu is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
     signal.signal(signal.SIGALRM, _timeout_handler)
+    # stored on the module so _process_file can reach it after the spawn
+    _process_file.redis_host = redis_host
 
 
 def _process_file(task):
@@ -38,7 +40,13 @@ def _process_file(task):
     pyc_file, target_out_dir = task
     signal.alarm(TIMEOUT_SECONDS)
     try:
-        py_file = decompile(pyc_file, target_out_dir)
+        # redis_cache_server_ip enables the shared translation cache (None disables it)
+        py_file = decompile(
+            pyc_file,
+            target_out_dir,
+            redis_cache_server_ip=getattr(_process_file, "redis_host", None),
+            redis_port=REDIS_PORT,
+        )
     except Exception as err:
         return pyc_file, repr(err), None
     finally:
@@ -116,14 +124,20 @@ def detect_gpus() -> list[int]:
 @click.option("-v", "--version", default=None, type=str, help="If using a specific PyLingual version, choose which Python version to evaluate on")
 @click.option("-g", "--gpus", default=None, type=str, help="Comma-separated GPU ids to use, e.g. 0,1,2 (default: all detected GPUs)")
 @click.option("-w", "--workers-per-gpu", default=1, type=click.IntRange(min=1), help="Worker processes per GPU (default: 1)")
+@click.option("-r", "--redis-host", default=os.environ.get("PYLINGUAL_REDIS_HOST", ""), type=str, help="Host of a redis translation cache, e.g. 127.0.0.1. Omit to disable caching (default: $PYLINGUAL_REDIS_HOST)")
 def main(out_dir, pylingual_version, pyc_list, version, gpus, workers_per_gpu):
     gpu_ids = [int(g) for g in gpus.split(",")] if gpus else detect_gpus()
+    redis_host = redis_host or None
     if not gpu_ids:
         click.echo("No GPUs found, running a single worker on CPU.")
         slots = [None]
     else:
         slots = [g for g in gpu_ids for _ in range(workers_per_gpu)]
     click.echo(f"Starting {len(slots)} worker(s) on GPUs: {gpu_ids or 'none'}")
+    if redis_host:
+        click.echo(f"Using redis translation cache at {redis_host}:{REDIS_PORT}")
+    else:
+        click.echo("No redis cache configured; pass --redis-host 127.0.0.1 (or set $PYLINGUAL_REDIS_HOST) to enable it")
 
     if pyc_list:
         lists = [(pyc_list, out_dir)]
@@ -145,7 +159,7 @@ def main(out_dir, pylingual_version, pyc_list, version, gpus, workers_per_gpu):
     for slot in slots:
         gpu_queue.put(slot)
 
-    with ctx.Pool(len(slots), initializer=_init_worker, initargs=(gpu_queue,)) as pool:
+    with ctx.Pool(len(slots), initializer=_init_worker, initargs=(gpu_queue, redis_host)) as pool:
         for path, target in lists:
             evaluate(pool, path, target)
 
