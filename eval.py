@@ -13,7 +13,7 @@ from pylingual.utils.version import PythonVersion
 
 TIMEOUT_SECONDS = 300 # 5-minute timeout for decompiling one file
 FIELDNAMES = ["pyc_file", "py_file", "identifier", "success", "category", "notes"]
-REDIS_PORT = 6379  # matches the redis container in docker-compose.yml / production
+REDIS_PORT = 6379  # match the port in the docker-compose.yml 
 
 # worker functions
 
