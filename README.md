@@ -44,6 +44,8 @@ uv run eval.py <output directory> [options]
 | `-p`, `--pylingual-version` | Dataset to evaluate on: `v1` or `v2` (default: `v1`) |
 | `-v`, `--version` | Python version to evaluate on, e.g. `3.13`. If omitted, every version in the dataset is evaluated |
 | `-l`, `--pyc-list` | Path to a custom text file of `.pyc` paths to evaluate. Overrides `-p` and `-v` |
+| "-g", "--gpus" | Comma-separated GPU ids to use, uses all gpus on system by default |
+| "-w", "--workers-per-gpu" | Worker processes per GPU, one worker by default |
 | `-r`, `--redis-host` | Host of a redis translation cache, e.g. `127.0.0.1`. Defaults to `$PYLINGUAL_REDIS_HOST`; unset means caching is disabled |
 
 Version text files are included in the repository for every supported Python release and contain an enumeration of paths to `.pyc` files used for that Python version.
